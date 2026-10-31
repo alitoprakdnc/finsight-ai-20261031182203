@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+
+############################
+# Builder stage
+############################
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Install only package metadata first to leverage Docker layer caching
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy the rest of the source code
+COPY . .
+
+# Build the Next.js application
+ENV NODE_ENV=production
+RUN npm run build
+
+############################
+# Runtime stage
+############################
+FROM node:20-alpine AS runner
+
+# Create a non‑root user to run the app
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
+
+WORKDIR /app
+
+# Copy production build artifacts from the builder
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/next.config.js ./
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json ./
+
+# Install only production dependencies
+ENV NODE_ENV=production
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Adjust permissions
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+# Expose the default Next.js port
+EXPOSE 3000
+
+# Health‑check endpoint (uses the public health route)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget --quiet --spider http://localhost:3000/api/health/live || exit 1
+
+# Start the Next.js server
+CMD ["npm", "run", "start"]

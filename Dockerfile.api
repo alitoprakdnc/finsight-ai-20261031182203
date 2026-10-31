@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1.4
+
+############################
+# Builder stage
+############################
+FROM golang:1.22-alpine AS builder
+
+# Install build‑time dependencies
+RUN apk add --no-cache git ca-certificates gcc musl-dev
+
+# Create a working directory
+WORKDIR /src
+
+# Cache go.mod / go.sum
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy the entire source tree
+COPY . .
+
+# Build the API binary
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ENV CGO_ENABLED=0
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -mod=readonly -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" \
+    -o /out/api ./cmd/api
+
+############################
+# Runtime stage
+############################
+FROM alpine:3.19 AS runtime
+
+# Add a non‑root user and group
+RUN addgroup -S appgroup && adduser -S -G appgroup appuser
+
+# Install runtime certificates
+RUN apk add --no-cache ca-certificates
+
+# Copy the compiled binary
+COPY --from=builder /out/api /usr/local/bin/api
+
+# Copy migrations (required at runtime) and any static assets
+COPY --from=builder /src/migrations /app/migrations
+COPY --from=builder /src/config /app/config
+
+# Set working directory
+WORKDIR /app
+
+# Use non‑root user
+USER appuser
+
+# Expose the HTTP port used by the API
+EXPOSE 8080
+
+# Health‑check – uses the liveness endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
+  CMD wget -qO- http://localhost:8080/api/health/live || exit 1
+
+# Default command
+ENTRYPOINT ["/usr/local/bin/api"]

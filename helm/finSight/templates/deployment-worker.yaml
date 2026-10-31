@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finSight.fullname" . }}-worker
+  labels:
+    {{- include "finSight.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "finSight.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      role: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "finSight.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        role: worker
+      annotations:
+        {{- if .Values.prometheus.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.worker.metricsPort | default 9090 }}"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.worker.serviceAccountName | default "default" }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 3000
+        fsGroup: 3000
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.worker.metricsPort | default 9090 }}
+              name: metrics
+          env:
+            - name: ENVIRONMENT
+              value: "{{ .Values.environment | default "production" }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.worker.logLevel | default "info" }}"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.databaseSecretName }}
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecretName }}
+                  key: REDIS_URL
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.minioSecretName }}
+                  key: MINIO_ENDPOINT
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.minioSecretName }}
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.minioSecretName }}
+                  key: MINIO_SECRET_KEY
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/var/run/secrets/google/credentials.json"
+            - name: OLLAMA_ENDPOINT
+              value: "{{ .Values.worker.ollamaEndpoint | default "http://ollama:11434" }}"
+            {{- range $key, $value := .Values.worker.extraEnv }}
+            - name: "{{ $key }}"
+              value: "{{ $value }}"
+            {{- end }}
+          resources:
+            limits:
+              cpu: {{ .Values.worker.resources.limits.cpu | default "500m" }}
+              memory: {{ .Values.worker.resources.limits.memory | default "512Mi" }}
+            requests:
+              cpu: {{ .Values.worker.resources.requests.cpu | default "250m" }}
+              memory: {{ .Values.worker.resources.requests.memory | default "256Mi" }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.worker.metricsPort | default 9090 }}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.worker.metricsPort | default 9090 }}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: google-secret
+              mountPath: /var/run/secrets/google
+              readOnly: true
+            - name: config
+              mountPath: /etc/worker
+              readOnly: true
+      volumes:
+        - name: google-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Values.secrets.providerClass }}
+        - name: config
+          configMap:
+            name: {{ include "finSight.fullname" . }}-worker-config
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

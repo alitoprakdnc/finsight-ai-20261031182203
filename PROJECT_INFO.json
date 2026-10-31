@@ -1,0 +1,419 @@
+{
+  "name": "FinSight AI",
+  "description": "FinSight AI is a secure, multi‑tenant SaaS platform that automates the ingestion, OCR extraction, AI‑enhanced categorisation and bookkeeping of financial documents (invoices, receipts, contracts). It provides a modern React dashboard for finance teams, a robust Go‑based API with OpenAPI spec, server‑less task processing, webhook notifications, role‑based access control, audit logging and full integration with cloud secret managers and storage. The system eliminates manual data entry, reduces errors, and keeps sensitive financial data encrypted at rest and in transit.",
+  "category": "FinTech Automation / SaaS",
+  "technologies": [
+    "Go (Gin)",
+    "PostgreSQL",
+    "Redis",
+    "Docker & Docker‑Compose",
+    "Kubernetes (Helm)",
+    "React + TypeScript (Next.js)",
+    "Tailwind CSS",
+    "Tesseract OCR",
+    "Ollama (local LLM) / OpenAI API",
+    "Google Cloud Secret Manager",
+    "Google Cloud Tasks (fallback to BullMQ)",
+    "AWS S3‑compatible storage (MinIO)",
+    "OpenAPI 3.0",
+    "JWT + OIDC",
+    "Cypress (E2E)",
+    "Go test + testify"
+  ],
+  "target_users": [
+    "Finance & Accounting teams in SMBs",
+    "Enterprise bookkeeping departments",
+    "Developers building integrations with ERP/Accounting software",
+    "Auditors needing immutable logs"
+  ],
+  "problem": "Companies still rely on manual entry of invoice and receipt data, leading to high labor costs, errors, and security risks. Existing OCR tools lack context‑aware categorisation, and integration with modern CI/CD pipelines, secret management and serverless processing is fragmented. FinSight AI delivers an end‑to‑end, secure, AI‑augmented workflow that automates document handling while keeping data compliant and auditable.",
+  "features": [
+    "Secure multi‑tenant document upload with client‑side encryption",
+    "Automatic OCR extraction using Tesseract, with language auto‑detect",
+    "LLM‑driven data enrichment: vendor name resolution, line‑item categorisation, tax calculation",
+    "Configurable approval workflows and role‑based permissions (Admin, Accountant, Viewer)",
+    "Audit‑ready immutable log stored in PostgreSQL with tamper‑evidence",
+    "Webhook engine with constant‑time HMAC validation for downstream systems",
+    "RESTful API with full OpenAPI 3.0 spec and interactive Swagger UI",
+    "Health‑check endpoint (/api/health) exposing liveness/readiness metrics",
+    "Serverless task queue (Google Cloud Tasks or BullMQ) for scalable processing",
+    "Integration with Google Cloud Secret Manager for API keys and DB credentials",
+    "Export to CSV/Excel and direct push to popular accounting SaaS via webhooks",
+    "Responsive dashboard with charts (spending trends, pending approvals) and searchable tables",
+    "Dark / Light theme, accessibility‑focused UI",
+    "CI/CD ready GitHub Actions workflow that runs lint, unit, integration and security scans"
+  ],
+  "architecture": "The system is split into three major layers:\n\n1. **Frontend (Next.js)** – Serves a SPA with authentication (OAuth2/OIDC), role‑based UI rendering, file upload component (uses pre‑signed URLs from the backend), dashboards, and settings pages. Tailwind CSS provides a consistent design system.\n2. **Backend API (Go + Gin)** – Exposes a versioned REST API (`/api/v1`). Core modules:\n   - `auth` – JWT issuance, OIDC integration, middleware for RBAC.\n   - `documents` – Handles upload metadata, generates pre‑signed S3 URLs, stores reference records.\n   - `processing` – Pushes a task to Google Cloud Tasks (or BullMQ fallback) containing the document ID.\n   - `worker` – Consumes tasks, runs Tesseract OCR, calls the LLM service (local Ollama or OpenAI), writes extracted data back to DB, triggers webhooks.\n   - `audit` – Writes immutable events to `audit_logs` table, also streams to Redis for real‑time UI updates.\n   - `webhook` – Validates inbound HMAC signatures, stores subscription info, retries on failure.\n   - `health` – Liveness/readiness probes, metrics endpoint (`/metrics`).\n3. **Infrastructure** – Docker‑Compose for local dev, Helm charts for K8s production. Services include PostgreSQL, Redis, MinIO (S3), Google Cloud Tasks emulator, and optional Ollama container. Secrets are fetched at runtime from Google Cloud Secret Manager via the Go client.\n\nAll communication uses HTTPS. Files are encrypted at rest in MinIO with server‑side encryption. JWTs are signed with RSA keys stored in Secret Manager. Rate‑limiting and request validation are enforced globally.\n\nData flow: User → Frontend → API (`/documents`) → Pre‑signed URL → Upload to MinIO → API creates `document` record → Enqueue task → Worker OCR → Worker LLM → DB update → Webhook → UI real‑time update via Redis Pub/Sub.",
+  "design_system": "FinSight AI adopts a minimalist, enterprise‑grade design system built on Tailwind CSS:\n- **Typography**: Inter (body) and Roboto Slab (headings) with responsive scaling.\n- **Color palette**: Primary #0A74DA, secondary #14A44D, neutrals #F5F7FA (light) / #1F2937 (dark), accent #F59E0B.\n- **Spacing**: 4‑px base unit, consistent margin/padding utilities.\n- **Components**: Card, Table with sortable columns, Modal, Drawer, Toast, Avatar, Badge, Progress Bar, Chart (Recharts), FileUploader (drag‑drop + preview), Permission Switcher.\n- **Interaction states**: Focus rings, hover/active shadows, disabled opacity.\n- **Responsive**: Mobile‑first breakpoints (sm 640px, md 768px, lg 1024px). Dashboard collapses side‑nav into hamburger on <md.\n- **Accessibility**: ARIA labels, keyboard navigation, color contrast ≥4.5:1.\n- **Dark mode** toggled via user preference, persisted in JWT claims.\nThe UI is built as a component library under `src/components` and reused across pages (`/dashboard`, `/documents`, `/settings`). Loading skeletons, empty states with friendly illustrations, and error toasts provide polished feedback.",
+  "testing": "Testing is layered:\n- **Unit**: Go packages tested with `go test` + `testify` for business logic, OCR wrapper, LLM client, webhook validator.\n- **Integration**: Docker‑Compose spins up API, PostgreSQL, Redis, MinIO; tests run against real services using `httptest` and `sqlx`.\n- **Contract**: OpenAPI spec validated with `speccy` and generated Go client stubs; CI ensures spec matches implementation.\n- **E2E**: Cypress scripts cover user flows – login, document upload, processing status, approval, webhook subscription.\n- **Security**: GitHub Actions run `gosec`, `npm audit`, and OWASP Dependency‑Check.\n- **Performance**: Locust scenarios for upload throughput and task queue latency.\nAll tests run in CI on every PR, with coverage thresholds (80%).",
+  "files": [
+    {
+      "path": "docker-compose.yml",
+      "purpose": "Local development composition: Go API, PostgreSQL, Redis, MinIO, Ollama, Google Tasks emulator, and Cypress test runner."
+    },
+    {
+      "path": "Dockerfile.api",
+      "purpose": "Multi‑stage Dockerfile for building the Go backend binary and producing a minimal runtime image."
+    },
+    {
+      "path": "Dockerfile.worker",
+      "purpose": "Dockerfile for the background worker service that processes OCR and LLM tasks."
+    },
+    {
+      "path": "Dockerfile.frontend",
+      "purpose": "Dockerfile for building the Next.js frontend with production optimizations."
+    },
+    {
+      "path": "helm/finSight/Chart.yaml",
+      "purpose": "Helm chart metadata for deploying FinSight AI to Kubernetes."
+    },
+    {
+      "path": "helm/finSight/values.yaml",
+      "purpose": "Default configuration values (replica counts, resource limits, secret references)."
+    },
+    {
+      "path": "helm/finSight/templates/deployment-api.yaml",
+      "purpose": "K8s Deployment manifest for the Go API service."
+    },
+    {
+      "path": "helm/finSight/templates/deployment-worker.yaml",
+      "purpose": "K8s Deployment manifest for the worker pods."
+    },
+    {
+      "path": "helm/finSight/templates/deployment-frontend.yaml",
+      "purpose": "K8s Deployment manifest for the Next.js frontend."
+    },
+    {
+      "path": "helm/finSight/templates/service-api.yaml",
+      "purpose": "K8s Service exposing the API internally and via an Ingress."
+    },
+    {
+      "path": "helm/finSight/templates/service-frontend.yaml",
+      "purpose": "K8s Service for the frontend UI."
+    },
+    {
+      "path": "helm/finSight/templates/ingress.yaml",
+      "purpose": "Ingress resource with TLS termination and path routing to API and UI."
+    },
+    {
+      "path": "helm/finSight/templates/secret.yaml",
+      "purpose": "K8s Secret template that pulls values from Google Cloud Secret Manager via CSI driver."
+    },
+    {
+      "path": "cmd/api/main.go",
+      "purpose": "Entry point for the API server: sets up Gin router, middleware, routes, health checks, and starts HTTP server."
+    },
+    {
+      "path": "cmd/worker/main.go",
+      "purpose": "Entry point for the background worker: connects to task queue, processes jobs, handles retries and logging."
+    },
+    {
+      "path": "internal/config/config.go",
+      "purpose": "Loads configuration from environment variables, supports overrides via Viper, includes secret manager integration."
+    },
+    {
+      "path": "internal/auth/jwt.go",
+      "purpose": "JWT generation, verification, and middleware for extracting user claims."
+    },
+    {
+      "path": "internal/auth/oidc.go",
+      "purpose": "OIDC client for external identity providers (Google, Azure AD)."
+    },
+    {
+      "path": "internal/middleware/logger.go",
+      "purpose": "Gin middleware that logs request/response details with structured fields to stdout."
+    },
+    {
+      "path": "internal/middleware/rbac.go",
+      "purpose": "Enforces role‑based access control based on JWT claims for each route."
+    },
+    {
+      "path": "internal/middleware/metrics.go",
+      "purpose": "Prometheus metrics exporter and `/metrics` endpoint registration."
+    },
+    {
+      "path": "internal/middleware/recovery.go",
+      "purpose": "Graceful panic recovery with error response and stack trace logging."
+    },
+    {
+      "path": "internal/router/router.go",
+      "purpose": "Defines all API routes, groups, and attaches middleware."
+    },
+    {
+      "path": "internal/router/health.go",
+      "purpose": "Health‑check handlers (`/api/health/live`, `/api/health/ready`)."
+    },
+    {
+      "path": "internal/router/docs.go",
+      "purpose": "Serves Swagger UI generated from OpenAPI spec at `/api/docs`."
+    },
+    {
+      "path": "internal/router/documents.go",
+      "purpose": "Endpoints for document CRUD, pre‑signed URL generation, and status queries."
+    },
+    {
+      "path": "internal/router/webhooks.go",
+      "purpose": "Endpoints for managing webhook subscriptions and receiving callbacks."
+    },
+    {
+      "path": "internal/models/document.go",
+      "purpose": "GORM model for `documents` table: metadata, storage key, status, extracted JSON."
+    },
+    {
+      "path": "internal/models/audit_log.go",
+      "purpose": "GORM model for immutable audit log entries."
+    },
+    {
+      "path": "internal/models/webhook.go",
+      "purpose": "GORM model for webhook subscription records (URL, secret, events)."
+    },
+    {
+      "path": "internal/repository/document_repo.go",
+      "purpose": "Data access layer for document CRUD operations with transaction support."
+    },
+    {
+      "path": "internal/repository/audit_repo.go",
+      "purpose": "Writes audit events; read‑only for admin UI."
+    },
+    {
+      "path": "internal/repository/webhook_repo.go",
+      "purpose": "CRUD for webhook subscriptions and secret retrieval."
+    },
+    {
+      "path": "internal/service/document_service.go",
+      "purpose": "Business logic for handling uploads, status transitions, and triggering processing tasks."
+    },
+    {
+      "path": "internal/service/processing_service.go",
+      "purpose": "Enqueues tasks to Google Cloud Tasks or BullMQ, builds payload with document ID."
+    },
+    {
+      "path": "internal/service/webhook_service.go",
+      "purpose": "Dispatches events to subscribed webhooks with constant‑time HMAC signature generation."
+    },
+    {
+      "path": "internal/service/ocr_service.go",
+      "purpose": "Wrapper around Tesseract OCR; supports language auto‑detect and returns raw text."
+    },
+    {
+      "path": "internal/service/llm_service.go",
+      "purpose": "Calls either local Ollama model or OpenAI API to parse OCR text into structured JSON (vendor, line items, taxes)."
+    },
+    {
+      "path": "internal/queue/task.go",
+      "purpose": "Defines the task payload schema and serialization helpers."
+    },
+    {
+      "path": "internal/queue/google_tasks.go",
+      "purpose": "Client for Google Cloud Tasks: create, lease, acknowledge tasks."
+    },
+    {
+      "path": "internal/queue/bullmq.go",
+      "purpose": "Fallback BullMQ (Redis‑based) task producer/consumer implementation."
+    },
+    {
+      "path": "internal/secret/manager.go",
+      "purpose": "Abstraction over Google Cloud Secret Manager; caches secrets in memory with TTL."
+    },
+    {
+      "path": "internal/util/hmac.go",
+      "purpose": "Constant‑time HMAC generation and verification for webhook security."
+    },
+    {
+      "path": "internal/util/validation.go",
+      "purpose": "Reusable request validation functions using go‑playground/validator."
+    },
+    {
+      "path": "internal/util/pagination.go",
+      "purpose": "Helper for cursor‑based pagination of document lists."
+    },
+    {
+      "path": "internal/util/logger.go",
+      "purpose": "Configures zap logger with JSON output and correlation IDs."
+    },
+    {
+      "path": "internal/util/response.go",
+      "purpose": "Standard API response envelope (status, data, error) and helper functions."
+    },
+    {
+      "path": "pkg/openapi/openapi.yaml",
+      "purpose": "Full OpenAPI 3.0 specification for the public API, used to generate Swagger UI and client SDKs."
+    },
+    {
+      "path": "pkg/seed/seed.go",
+      "purpose": "Database seeding script: creates demo tenants, users, sample documents, and webhook subscriptions."
+    },
+    {
+      "path": "scripts/migrate.sh",
+      "purpose": "Runs Goose migrations against the configured PostgreSQL instance."
+    },
+    {
+      "path": "scripts/gen_openapi.sh",
+      "purpose": "Generates Go server stubs from OpenAPI spec (kept for future expansion)."
+    },
+    {
+      "path": "migrations/20240101_create_tables.sql",
+      "purpose": "SQL migration that creates `documents`, `audit_logs`, `webhooks`, and related indexes."
+    },
+    {
+      "path": "migrations/20240215_add_audit_triggers.sql",
+      "purpose": "Adds PostgreSQL triggers to enforce immutability of audit logs."
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "purpose": "GitHub Actions CI pipeline: lint, unit tests, integration tests, security scans, build Docker images, push to registry on tag."
+    },
+    {
+      "path": ".github/workflows/deploy.yml",
+      "purpose": "CD workflow that deploys Helm chart to GKE on successful release."
+    },
+    {
+      "path": "frontend/next.config.js",
+      "purpose": "Next.js configuration: redirects, image domains, environment variable exposure."
+    },
+    {
+      "path": "frontend/package.json",
+      "purpose": "Node package manifest with dependencies (react, next, tailwindcss, axios, recharts, cypress)."
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "purpose": "TypeScript compiler configuration for strict type checking."
+    },
+    {
+      "path": "frontend/tailwind.config.js",
+      "purpose": "Tailwind CSS configuration: custom colors, dark mode, plugins."
+    },
+    {
+      "path": "frontend/postcss.config.js",
+      "purpose": "PostCSS setup for Tailwind processing."
+    },
+    {
+      "path": "frontend/src/pages/_app.tsx",
+      "purpose": "Custom App component that injects global styles, auth provider, and layout wrapper."
+    },
+    {
+      "path": "frontend/src/pages/index.tsx",
+      "purpose": "Landing page with product overview and sign‑in button."
+    },
+    {
+      "path": "frontend/src/pages/dashboard.tsx",
+      "purpose": "Main dashboard showing spending charts, pending approvals, and recent documents."
+    },
+    {
+      "path": "frontend/src/pages/documents.tsx",
+      "purpose": "Document list view with filters, search, pagination, and bulk actions."
+    },
+    {
+      "path": "frontend/src/pages/documents/[id].tsx",
+      "purpose": "Detail view for a single document: preview, extracted data, status timeline, and manual edit."
+    },
+    {
+      "path": "frontend/src/pages/settings.tsx",
+      "purpose": "User and tenant settings: password change, webhook management, API key view."
+    },
+    {
+      "path": "frontend/src/components/Layout.tsx",
+      "purpose": "Responsive layout with side navigation, header, and theme toggle."
+    },
+    {
+      "path": "frontend/src/components/DocumentCard.tsx",
+      "purpose": "Card component displaying thumbnail, status badge, and quick actions."
+    },
+    {
+      "path": "frontend/src/components/UploadDropzone.tsx",
+      "purpose": "Drag‑and‑drop file uploader that requests a pre‑signed URL from the API and uploads directly to MinIO."
+    },
+    {
+      "path": "frontend/src/components/ChartSpending.tsx",
+      "purpose": "Recharts line/bar chart visualising spend over time, with drill‑down filters."
+    },
+    {
+      "path": "frontend/src/components/ModalConfirm.tsx",
+      "purpose": "Reusable confirmation modal used for deletions and approvals."
+    },
+    {
+      "path": "frontend/src/components/ToastProvider.tsx",
+      "purpose": "Context provider for global toast notifications (success, error, info)."
+    },
+    {
+      "path": "frontend/src/components/PermissionGate.tsx",
+      "purpose": "Component that conditionally renders children based on user role permissions."
+    },
+    {
+      "path": "frontend/src/components/LoadingSkeleton.tsx",
+      "purpose": "Skeleton UI shown while data is loading."
+    },
+    {
+      "path": "frontend/src/hooks/useAuth.ts",
+      "purpose": "Custom hook that manages JWT storage, refresh, and provides auth context."
+    },
+    {
+      "path": "frontend/src/hooks/useDocuments.ts",
+      "purpose": "Hook for fetching, searching, and paginating documents with React Query."
+    },
+    {
+      "path": "frontend/src/hooks/useWebhooks.ts",
+      "purpose": "Hook for CRUD operations on webhook subscriptions."
+    },
+    {
+      "path": "frontend/src/utils/api.ts",
+      "purpose": "Axios instance with interceptors for auth header injection and error handling."
+    },
+    {
+      "path": "frontend/src/utils/formatters.ts",
+      "purpose": "Utility functions for currency formatting, date display, and status badge mapping."
+    },
+    {
+      "path": "frontend/src/styles/globals.css",
+      "purpose": "Base Tailwind imports and global CSS resets."
+    },
+    {
+      "path": "frontend/public/manifest.json",
+      "purpose": "Web app manifest for PWA capabilities."
+    },
+    {
+      "path": "frontend/public/favicon.ico",
+      "purpose": "Favicon for the application."
+    },
+    {
+      "path": "frontend/cypress/e2e/login.spec.ts",
+      "purpose": "Cypress test that verifies login flow and token storage."
+    },
+    {
+      "path": "frontend/cypress/e2e/upload.spec.ts",
+      "purpose": "E2E test for document upload, processing status polling, and UI updates."
+    },
+    {
+      "path": "frontend/cypress/support/commands.ts",
+      "purpose": "Custom Cypress commands for API calls and auth handling."
+    },
+    {
+      "path": "frontend/cypress/tsconfig.json",
+      "purpose": "TypeScript config for Cypress tests."
+    },
+    {
+      "path": "frontend/.eslintrc.js",
+      "purpose": "ESLint configuration enforcing code style and security best practices."
+    },
+    {
+      "path": "frontend/.prettierrc",
+      "purpose": "Prettier formatting rules for consistent code style."
+    },
+    {
+      "path": "frontend/.env.example",
+      "purpose": "Template for required environment variables (API_URL, NEXT_PUBLIC_OIDC_ISSUER, etc.)."
+    },
+    {
+      "path": "frontend/src/types/api.d.ts",
+      "purpose": "TypeScript interfaces describing API request/response payloads."
+    },
+    {
+      "path": "frontend/src/types/document.d.ts",
+      "purpose": "Domain models for Document, ExtractedData, and Status enums."
+    },
+    {
+      "path": "frontend/src/types/webhook.d.ts",
+      "purpose": "Interfaces for webhook subscription objects and event payloads."
+    }
+  ]
+}

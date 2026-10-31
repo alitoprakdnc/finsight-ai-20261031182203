@@ -1,0 +1,264 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run Tests & Security Scans
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      GO111MODULE: on
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.58.2
+
+      - name: Lint Go code
+        run: golangci-lint run ./...
+
+      - name: Run Go unit tests with coverage
+        run: |
+          go test ./... -covermode=atomic -coverprofile=coverage.out
+        env:
+          CGO_ENABLED: 0
+
+      - name: Upload Go coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 7
+
+      - name: Run gosec security scan
+        uses: securego/gosec-action@v2
+        with:
+          go-version: '1.22'
+          args: "-exclude=G104,G107 ./..."
+
+      - name: Cache Node modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            frontend/node_modules
+          key: node-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            node-${{ runner.os }}-
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Lint frontend code
+        working-directory: ./frontend
+        run: npx eslint . --ext .js,.jsx,.ts,.tsx --max-warnings=0
+
+      - name: Run npm audit (high severity only)
+        working-directory: ./frontend
+        run: |
+          npm audit --audit-level=high || {
+            echo "npm audit found high severity vulnerabilities"
+            exit 1
+          }
+
+      - name: Start integration services
+        run: |
+          docker compose -f docker-compose.yml up -d postgres redis minio ollama google-cloud-tasks-emulator
+          # Wait for services to be ready
+          for i in {1..30}; do
+            docker exec $(docker ps -qf "name=postgres") pg_isready && break
+            sleep 2
+          done
+
+      - name: Run integration tests (API + Worker)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/finSight?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          OLLAMA_ENDPOINT: http://localhost:11434
+        run: |
+          go test ./... -tags=integration -run TestIntegration -count=1 -v
+
+      - name: Run Cypress end‑to‑end tests
+        env:
+          CYPRESS_BASE_URL: http://localhost:3000
+          CYPRESS_API_URL: http://localhost:8080/api/v1
+        run: |
+          # Build and start the API and frontend in the background
+          docker compose -f docker-compose.yml up -d api worker frontend
+          # Wait for the UI to be reachable
+          n=0
+          until curl -sSf "$CYPRESS_BASE_URL" >/dev/null || [ $n -ge 30 ]; do
+            echo "Waiting for frontend..."
+            sleep 2
+            n=$((n+1))
+          done
+          # Run Cypress
+          cd frontend
+          npx cypress run --headless --browser chrome
+
+      - name: Stop Docker compose services
+        if: always()
+        run: docker compose -f docker-compose.yml down -v
+
+      - name: Scan Docker images with Trivy (API)
+        uses: aquasecurity/trivy-action@0.27.0
+        with:
+          image-ref: finshight-api:${{ github.sha }}
+          format: 'sarif'
+          output: trivy-api.sarif
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan Docker images with Trivy (Worker)
+        uses: aquasecurity/trivy-action@0.27.0
+        with:
+          image-ref: finshight-worker:${{ github.sha }}
+          format: 'sarif'
+          output: trivy-worker.sarif
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan Docker images with Trivy (Frontend)
+        uses: aquasecurity/trivy-action@0.27.0
+        with:
+          image-ref: finshight-frontend:${{ github.sha }}
+          format: 'sarif'
+          output: trivy-frontend.sarif
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy SARIF reports
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-*.sarif
+
+  publish:
+    name: Build & Publish Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      REGISTRY: ${{ secrets.REGISTRY_URL }}
+      IMAGE_NAME: ${{ secrets.REGISTRY_REPOSITORY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract version tag
+        id: vars
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:${{ steps.vars.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:buildcache,mode=max
+
+      - name: Build and push Worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:${{ steps.vars.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:buildcache,mode=max
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: Dockerfile.frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ steps.vars.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:buildcache,mode=max
+
+      - name: Verify images are pushed
+        run: |
+          echo "Images pushed for version ${{ steps.vars.outputs.VERSION }}:"
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:${{ steps.vars.outputs.VERSION }}"
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:${{ steps.vars.outputs.VERSION }}"
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ steps.vars.outputs.VERSION }}"

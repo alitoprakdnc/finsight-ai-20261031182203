@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finSight.fullname" . }}-api
+  labels:
+    {{- include "finSight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .Values.api.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.api.service.type | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port | default 80 }}
+      targetPort: {{ .Values.api.service.targetPort | default 8080 }}
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "finSight.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: api
+  sessionAffinity: None

@@ -1,0 +1,159 @@
+name: Deploy to GKE
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # semantic version tags, e.g. v1.2.3
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy (e.g., v1.2.3)'
+        required: true
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  # GCP project and GKE cluster details – set in repository/organization secrets
+  GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  GKE_ZONE: ${{ secrets.GKE_ZONE }}
+  # Docker registry (Artifact Registry) location
+  REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }} # e.g. us-central1-docker.pkg.dev
+  # Helm release name and namespace
+  HELM_RELEASE: finSight
+  HELM_NAMESPACE: fin-sight
+  # Path to the Helm chart in the repo
+  CHART_PATH: ./helm/finSight
+
+jobs:
+  deploy:
+    name: Deploy Helm chart to GKE
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # needed for Workload Identity
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for tag reference
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          export_default_credentials: true
+          install_components: 'kubectl,helm'
+
+      - name: Authenticate to GKE using Workload Identity
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GKE_DEPLOY_SA }}
+
+      - name: Configure gcloud authentication
+        run: |
+          gcloud auth activate-service-account --key-file="${{ steps.auth.outputs.credentials_file_path }}"
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "${{ env.GKE_CLUSTER }}" \
+            --zone "${{ env.GKE_ZONE }}" \
+            --project "${{ env.GCP_PROJECT }}"
+
+      - name: Verify kubectl connectivity
+        run: |
+          kubectl version --client
+          kubectl get nodes -o name | wc -l
+
+      - name: Log in to Artifact Registry (Docker)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: _json_key
+          password: ${{ secrets.GAR_JSON_KEY }}
+
+      - name: Install Helm (ensure latest)
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.13.0
+
+      - name: Lint Helm chart
+        run: |
+          helm lint "${{ env.CHART_PATH }}"
+
+      - name: Render Helm template (dry‑run) for sanity check
+        run: |
+          helm template "${{ env.HELM_RELEASE }}" "${{ env.CHART_PATH }}" \
+            --namespace "${{ env.HELM_NAMESPACE }}" \
+            --set image.api.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/api" \
+            --set image.api.tag="${{ steps.tag.outputs.tag }}" \
+            --set image.worker.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/worker" \
+            --set image.worker.tag="${{ steps.tag.outputs.tag }}" \
+            --set image.frontend.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/frontend" \
+            --set image.frontend.tag="${{ steps.tag.outputs.tag }}" \
+            --debug > /dev/null
+
+      - name: Deploy/Upgrade Helm release
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }}
+        run: |
+          set -euo pipefail
+
+          # Ensure namespace exists
+          kubectl create namespace "${{ env.HELM_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
+
+          # Perform upgrade or install
+          helm upgrade --install "${{ env.HELM_RELEASE }}" "${{ env.CHART_PATH }}" \
+            --namespace "${{ env.HELM_NAMESPACE }}" \
+            --wait \
+            --timeout 10m \
+            --set image.api.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/api" \
+            --set image.api.tag="${{ steps.tag.outputs.tag }}" \
+            --set image.worker.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/worker" \
+            --set image.worker.tag="${{ steps.tag.outputs.tag }}" \
+            --set image.frontend.repository="${{ env.REGISTRY_HOST }}/${{ env.GCP_PROJECT }}/finSight/frontend" \
+            --set image.frontend.tag="${{ steps.tag.outputs.tag }}" \
+            --set env.GCP_PROJECT="${{ env.GCP_PROJECT }}" \
+            --set env.GKE_CLUSTER="${{ env.GKE_CLUSTER }}" \
+            --set env.GKE_ZONE="${{ env.GKE_ZONE }}"
+
+      - name: Post‑deployment health check
+        run: |
+          set -euo pipefail
+          echo "Checking API health endpoint..."
+          API_URL=$(kubectl get svc "${{ env.HELM_RELEASE }}-api" -n "${{ env.HELM_NAMESPACE }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [[ -z "$API_URL" ]]; then
+            echo "❌ LoadBalancer IP/hostname not available yet."
+            exit 1
+          fi
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$API_URL/api/health/live")
+            if [[ "$STATUS" == "200" ]]; then
+              echo "✅ API is healthy."
+              exit 0
+            fi
+            echo "Waiting for API health (attempt $i)..."
+            sleep 15
+          done
+          echo "❌ API health check failed after multiple attempts."
+          exit 1
+
+    environment:
+      name: production
+      url: https://${{ env.HELM_RELEASE }}-frontend.${{ env.GKE_ZONE }}.cloud.goog   # adjust as needed

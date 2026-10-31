@@ -1,0 +1,68 @@
+{
+  "name": "finsight-ai-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FinSight AI – modern React/Next.js dashboard for automated financial document processing",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "jest",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run",
+    "postinstall": "next telemetry disable"
+  },
+  "dependencies": {
+    "next": "14.2.4",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "axios": "^1.7.2",
+    "tailwindcss": "^3.4.1",
+    "postcss": "^8.4.33",
+    "autoprefixer": "^10.4.17",
+    "recharts": "^2.12.5",
+    "clsx": "^2.1.0",
+    "swr": "^2.2.5",
+    "jwt-decode": "^4.0.0",
+    "react-query": "^3.39.3",
+    "react-hook-form": "^7.49.3",
+    "zod": "^3.22.4",
+    "date-fns": "^3.3.1",
+    "react-icons": "^5.2.0",
+    "next-auth": "^4.24.7",
+    "next-themes": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.12.7",
+    "@types/react": "18.2.57",
+    "@types/react-dom": "18.2.19",
+    "@typescript-eslint/eslint-plugin": "^7.5.0",
+    "@typescript-eslint/parser": "^7.5.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.4",
+    "eslint-plugin-react": "^7.34.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.5",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "typescript": "5.4.2",
+    "cypress": "^13.9.0",
+    "@cypress/react": "^7.0.2",
+    "@cypress/webpack-dev-server": "^5.0.1",
+    "jest": "^29.7.0",
+    "@testing-library/react": "^14.2.1",
+    "@testing-library/jest-dom": "^6.4.2",
+    "@testing-library/user-event": "^14.5.2",
+    "ts-jest": "^29.1.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "browserslist": [
+    "defaults",
+    "not IE 11",
+    "maintained node versions"
+  ]
+}

@@ -1,0 +1,306 @@
+global:
+  imagePullPolicy: IfNotPresent
+  namespace: finsight
+  environment: production
+
+image:
+  repository: ghcr.io/yourorg/finsight-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+workerImage:
+  repository: ghcr.io/yourorg/finsight-worker
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+frontendImage:
+  repository: ghcr.io/yourorg/finsight-frontend
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount:
+  api: 3
+  worker: 2
+  frontend: 2
+
+service:
+  api:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  frontend:
+    type: ClusterIP
+    port: 80
+    targetPort: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  hosts:
+    - host: api.finsight.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+    - host: app.finsight.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: finsight-tls
+      hosts:
+        - api.finsight.example.com
+        - app.finsight.example.com
+
+resources:
+  api:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+  worker:
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+  frontend:
+    limits:
+      cpu: "300m"
+      memory: "256Mi"
+    requests:
+      cpu: "150m"
+      memory: "128Mi"
+
+env:
+  api:
+    - name: APP_ENV
+      value: "{{ .Values.global.environment }}"
+    - name: LOG_LEVEL
+      value: "info"
+    - name: DB_HOST
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: host
+    - name: DB_PORT
+      value: "5432"
+    - name: DB_NAME
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: name
+    - name: DB_USER
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: username
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: password
+    - name: REDIS_HOST
+      valueFrom:
+        secretKeyRef:
+          name: finsight-redis
+          key: host
+    - name: REDIS_PORT
+      value: "6379"
+    - name: MINIO_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: endpoint
+    - name: MINIO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: accessKey
+    - name: MINIO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: secretKey
+    - name: MINIO_BUCKET
+      value: "finsight-documents"
+    - name: GOOGLE_CLOUD_PROJECT
+      valueFrom:
+        secretKeyRef:
+          name: finsight-gcp
+          key: project_id
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: "/secrets/gcp/key.json"
+    - name: OLLAMA_ENDPOINT
+      value: "http://ollama:11434"
+    - name: TASK_QUEUE
+      value: "google"
+    - name: JWT_PRIVATE_KEY_PATH
+      value: "/secrets/jwt/private.pem"
+    - name: JWT_PUBLIC_KEY_PATH
+      value: "/secrets/jwt/public.pem"
+    - name: OIDC_ISSUER_URL
+      valueFrom:
+        secretKeyRef:
+          name: finsight-oidc
+          key: issuer
+    - name: OIDC_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: finsight-oidc
+          key: client_id
+    - name: OIDC_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: finsight-oidc
+          key: client_secret
+
+  worker:
+    - name: APP_ENV
+      value: "{{ .Values.global.environment }}"
+    - name: LOG_LEVEL
+      value: "info"
+    - name: DB_HOST
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: host
+    - name: DB_PORT
+      value: "5432"
+    - name: DB_NAME
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: name
+    - name: DB_USER
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: username
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: finsight-db
+          key: password
+    - name: REDIS_HOST
+      valueFrom:
+        secretKeyRef:
+          name: finsight-redis
+          key: host
+    - name: REDIS_PORT
+      value: "6379"
+    - name: MINIO_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: endpoint
+    - name: MINIO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: accessKey
+    - name: MINIO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: finsight-minio
+          key: secretKey
+    - name: GOOGLE_CLOUD_PROJECT
+      valueFrom:
+        secretKeyRef:
+          name: finsight-gcp
+          key: project_id
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: "/secrets/gcp/key.json"
+    - name: OLLAMA_ENDPOINT
+      value: "http://ollama:11434"
+    - name: TASK_QUEUE
+      value: "google"
+    - name: JWT_PRIVATE_KEY_PATH
+      value: "/secrets/jwt/private.pem"
+    - name: JWT_PUBLIC_KEY_PATH
+      value: "/secrets/jwt/public.pem"
+
+  frontend:
+    - name: NEXT_PUBLIC_API_URL
+      value: "https://api.finsight.example.com/api/v1"
+    - name: NEXT_PUBLIC_OIDC_ISSUER
+      valueFrom:
+        secretKeyRef:
+          name: finsight-oidc
+          key: issuer
+    - name: NEXT_PUBLIC_OIDC_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: finsight-oidc
+          key: client_id
+
+persistence:
+  minio:
+    enabled: true
+    size: 20Gi
+    storageClass: standard
+  postgres:
+    enabled: true
+    size: 10Gi
+    storageClass: standard
+  redis:
+    enabled: true
+    size: 2Gi
+    storageClass: standard
+
+secretMounts:
+  api:
+    - name: gcp-credentials
+      mountPath: /secrets/gcp
+      secretName: finsight-gcp-credentials
+      readOnly: true
+    - name: jwt-keys
+      mountPath: /secrets/jwt
+      secretName: finsight-jwt-keys
+      readOnly: true
+  worker:
+    - name: gcp-credentials
+      mountPath: /secrets/gcp
+      secretName: finsight-gcp-credentials
+      readOnly: true
+    - name: jwt-keys
+      mountPath: /secrets/jwt
+      secretName: finsight-jwt-keys
+      readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+  worker:
+    enabled: false
+  frontend:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+monitoring:
+  enabled: true
+  prometheus:
+    scrapeInterval: "30s"
+    additionalScrapeConfigs: {}
+
+logging:
+  level: info
+  format: json

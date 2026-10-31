@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finSight.fullname" . }}-frontend
+  labels:
+    {{- include "finSight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  {{- with .Values.service.frontend.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.frontend.type | default "ClusterIP" }}
+  {{- if eq .Values.service.frontend.type "NodePort" }}
+  {{- if .Values.service.frontend.nodePort }}
+  externalTrafficPolicy: Local
+  {{- end }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.service.frontend.port | default 80 }}
+      targetPort: {{ .Values.service.frontend.targetPort | default 3000 }}
+      protocol: TCP
+      {{- if and (eq .Values.service.frontend.type "NodePort") .Values.service.frontend.nodePort }}
+      nodePort: {{ .Values.service.frontend.nodePort }}
+      {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ include "finSight.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: frontend

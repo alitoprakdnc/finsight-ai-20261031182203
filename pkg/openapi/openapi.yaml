@@ -1,0 +1,786 @@
+openapi: 3.0.0
+info:
+  title: FinSight AI Public API
+  description: |
+    FinSight AI is a secure, multi‑tenant SaaS platform that automates the ingestion,
+    OCR extraction, AI‑enhanced categorisation and bookkeeping of financial documents.
+    This OpenAPI 3.0 specification describes the public REST API exposed by the
+    Go‑based backend (version v1). It is used to generate Swagger UI, client SDKs
+    and to drive contract testing.
+  version: "1.0.0"
+  contact:
+    name: FinSight AI Team
+    url: https://github.com/finsight-ai
+    email: support@finsight.ai
+servers:
+  - url: https://api.finsight.ai
+    description: Production server
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: Auth
+    description: Authentication and token management
+  - name: Documents
+    description: Document lifecycle – upload, retrieval, processing status and data
+  - name: Webhooks
+    description: Manage webhook subscriptions and event delivery
+  - name: Health
+    description: Liveness, readiness and metrics endpoints
+paths:
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Authenticate a user and obtain a JWT access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      summary: Refresh an access token using a valid refresh token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/health/live:
+    get:
+      tags:
+        - Health
+      summary: Liveness probe – returns 200 if the process is running
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/health/ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness probe – returns 200 when the service is ready to accept traffic
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service not ready (e.g., DB connection failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/metrics:
+    get:
+      tags:
+        - Health
+      summary: Prometheus metrics endpoint
+      description: Exposes Prometheus‑compatible metrics for monitoring.
+      responses:
+        '200':
+          description: Plain‑text metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/documents:
+    post:
+      tags:
+        - Documents
+      summary: Create a new document record and obtain a pre‑signed upload URL
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        description: Metadata for the document to be uploaded
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentCreateRequest'
+      responses:
+        '201':
+          description: Document record created; includes pre‑signed URL for direct upload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags:
+        - Documents
+      summary: List documents for the current tenant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/CreatedAfter'
+        - $ref: '#/components/parameters/CreatedBefore'
+      responses:
+        '200':
+          description: Paginated list of documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/documents/{documentId}:
+    parameters:
+      - $ref: '#/components/parameters/DocumentIdPath'
+    get:
+      tags:
+        - Documents
+      summary: Retrieve document metadata (no file content)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Document metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Documents
+      summary: Delete a document and its stored file
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Document successfully deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflict – document is currently being processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/documents/{documentId}/download:
+    parameters:
+      - $ref: '#/components/parameters/DocumentIdPath'
+    get:
+      tags:
+        - Documents
+      summary: Obtain a pre‑signed URL to download the original file
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pre‑signed download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedURLResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/documents/{documentId}/status:
+    parameters:
+      - $ref: '#/components/parameters/DocumentIdPath'
+    get:
+      tags:
+        - Documents
+      summary: Get the current processing status and any extracted data
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Status object with optional extracted data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/documents/{documentId}/extracted:
+    parameters:
+      - $ref: '#/components/parameters/DocumentIdPath'
+    patch:
+      tags:
+        - Documents
+      summary: Manually edit extracted data (e.g., after reviewer correction)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractedDataPatch'
+      responses:
+        '200':
+          description: Updated extracted data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractedData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/webhooks:
+    post:
+      tags:
+        - Webhooks
+      summary: Register a new webhook subscription
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreateRequest'
+      responses:
+        '201':
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags:
+        - Webhooks
+      summary: List webhook subscriptions for the current tenant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Paginated list of webhook subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/webhooks/{webhookId}:
+    parameters:
+      - $ref: '#/components/parameters/WebhookIdPath'
+    get:
+      tags:
+        - Webhooks
+      summary: Retrieve a single webhook subscription
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Webhook subscription details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Webhooks
+      summary: Delete a webhook subscription
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Subscription deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    DocumentIdPath:
+      name: documentId
+      in: path
+      required: true
+      description: UUID of the document
+      schema:
+        type: string
+        format: uuid
+    WebhookIdPath:
+      name: webhookId
+      in: path
+      required: true
+      description: UUID of the webhook subscription
+      schema:
+        type: string
+        format: uuid
+    PageParam:
+      name: page
+      in: query
+      description: Page number (starting at 1)
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page (max 100)
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    StatusFilter:
+      name: status
+      in: query
+      description: Filter documents by processing status
+      required: false
+      schema:
+        type: string
+        enum:
+          - pending
+          - processing
+          - completed
+          - failed
+    CreatedAfter:
+      name: created_after
+      in: query
+      description: ISO8601 timestamp – only return documents created after this time
+      required: false
+      schema:
+        type: string
+        format: date-time
+    CreatedBefore:
+      name: created_before
+      in: query
+      description: ISO8601 timestamp – only return documents created before this time
+      required: false
+      schema:
+        type: string
+        format: date-time
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          example: secret123
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token (valid for 15 minutes)
+        refresh_token:
+          type: string
+          description: Long‑lived refresh token (valid for 30 days)
+        expires_in:
+          type: integer
+          description: Seconds until access token expiry
+          example: 900
+        token_type:
+          type: string
+          enum: [Bearer]
+          default: Bearer
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Previously issued refresh token
+    RefreshResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+          example: 900
+        token_type:
+          type: string
+          enum: [Bearer]
+          default: Bearer
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
+        timestamp:
+          type: string
+          format: date-time
+    DocumentCreateRequest:
+      type: object
+      required:
+        - filename
+        - content_type
+        - size
+      properties:
+        filename:
+          type: string
+          description: Original file name
+          example: invoice_2024_01.pdf
+        content_type:
+          type: string
+          description: MIME type of the file
+          example: application/pdf
+        size:
+          type: integer
+          description: File size in bytes
+          example: 245678
+        metadata:
+          type: object
+          description: Optional key‑value pairs supplied by the client
+          additionalProperties:
+            type: string
+    DocumentCreateResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        upload_url:
+          type: string
+          format: uri
+          description: Pre‑signed URL for direct upload to MinIO (valid for 5 minutes)
+        expires_at:
+          type: string
+          format: date-time
+    DocumentMeta:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    DocumentListResponse:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+          description: Total number of documents matching the filter
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentMeta'
+    PresignedURLResponse:
+      type: object
+      properties:
+        download_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+    DocumentStatusResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+        progress:
+          type: integer
+          description: Percentage of processing completed (0‑100)
+          minimum: 0
+          maximum: 100
+        error_message:
+          type: string
+          nullable: true
+        extracted_data:
+          $ref: '#/components/schemas/ExtractedData'
+        updated_at:
+          type: string
+          format: date-time
+    ExtractedData:
+      type: object
+      description: Structured data parsed from the document
+      properties:
+        vendor:
+          type: string
+          example: Acme Corp
+        invoice_number:
+          type: string
+          example: INV-2024-00123
+        invoice_date:
+          type: string
+          format: date
+          example: 2024-01-15
+        total_amount:
+          type: number
+          format: double
+          example: 1245.67
+        currency:
+          type: string
+          example: USD
+        tax_amount:
+          type: number
+          format: double
+          example: 100.00
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItem'
+        raw_text:
+          type: string
+          description: Full OCR‑extracted plain text
+    LineItem:
+      type: object
+      properties:
+        description:
+          type: string
+          example: "Consulting services – Jan 2024"
+        quantity:
+          type: number
+          format: double
+          example: 1
+        unit_price:
+          type: number
+          format: double
+          example: 1145.67
+        total:
+          type: number
+          format: double
+          example: 1145.67
+    ExtractedDataPatch:
+      type: object
+      description: Partial update of extracted data (fields omitted are left unchanged)
+      properties:
+        vendor:
+          type: string
+        invoice_number:
+          type: string
+        invoice_date:
+          type: string
+          format: date
+        total_amount:
+          type: number
+          format: double
+        currency:
+          type: string
+        tax_amount:
+          type: number
+          format: double
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItem'
+        raw_text:
+          type: string
+    WebhookCreateRequest:
+      type: object
+      required:
+        - url
+        - events
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Destination endpoint for webhook POSTs
+        secret:
+          type: string
+          description: Optional shared secret used for HMAC signature (if omitted, server generates one)
+        events:
+          type: array
+          description: List of event types the subscriber wants to receive
+          items:
+            type: string
+            enum:
+              - document.created
+              - document.processed
+              - document.failed
+    WebhookSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+          description: HMAC secret (masked in responses)
+          example: "********"
+        events:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WebhookListResponse:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookSubscription'
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties:
+            type: string
+  responses:
+    BadRequest:
+      description: Invalid request parameters or payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required or token invalid/expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RequestEntityTooLarge:
+      description: Uploaded file exceeds allowed size limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

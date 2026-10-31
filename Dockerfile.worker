@@ -1,0 +1,67 @@
+# syntax=docker/dockerfile:1.4
+
+############################
+# Builder Stage
+############################
+FROM golang:1.22-alpine AS builder
+
+# Install build‑time dependencies
+RUN apk add --no-cache \
+    git \
+    gcc \
+    musl-dev \
+    ca-certificates
+
+# Create and set work directory
+WORKDIR /src
+
+# Cache go.mod download
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the worker binary
+# CGO_ENABLED=0 ensures a fully static binary (except for OS libs needed at runtime)
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+RUN go build -ldflags="-s -w" -o /out/worker ./cmd/worker/main.go
+
+############################
+# Runtime Stage
+############################
+FROM alpine:3.19 AS runtime
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    ca-certificates \
+    tzdata \
+    libstdc++ \
+    && update-ca-certificates
+
+# Create non‑root user and group
+RUN addgroup -S app && adduser -S -G app app
+
+# Set working directory
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /out/worker /app/worker
+
+# Ensure the binary is executable
+RUN chmod +x /app/worker
+
+# Switch to non‑root user
+USER app
+
+# Expose any ports if needed (worker typically does not expose HTTP)
+# EXPOSE 8081
+
+# Define default command
+ENTRYPOINT ["/app/worker"]
+
+# Optional healthcheck – the worker can expose a simple /health endpoint if implemented
+# HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+#   CMD wget -qO- http://localhost:8081/health || exit 1
